@@ -23,10 +23,12 @@ class PreConvBlock(nn.Module):
             x_cur = x[self.pos - 1]
             x_pst = x[self.pos + 1:]
 
+        
         x_cur = self.pad(x_cur)
         x_cur = self.conv(x_cur)
         x_cur = self.nl(x_cur)
-
+        print(x_cur.size())
+        
         return x_pre + (x_cur, ) + x_pst
 
 class UpSkipBlock(nn.Module):
@@ -51,6 +53,7 @@ class UpSkipBlock(nn.Module):
     def forward(self, *x):
         if self.pos == 5:
             x_pre = x[:self.pos - 1 ]
+           
             x_new = x[self.pos - 1]
             x_skp = tuple()
             x_pst = x[self.pos:]
@@ -66,13 +69,15 @@ class UpSkipBlock(nn.Module):
         # Mix in skip connections from the encoder
         # (if there are any)
         if len(x_skp) > 0:
+
             x_new = torch.cat((x_new, x_skp), 1)
+            print("henlo")
 
         # Combine up-scaled input and skip connections
         x_new = self.pad(x_new)
         x_new = self.conv(x_new)
         x_new = self.nl(x_new)
-
+        print(x_new.size())
         return x_pre + (x_new, ) + x_pst
 
 class PartialDecoder(nn.Module):
@@ -132,4 +137,5 @@ class PartialDecoder(nn.Module):
     def forward(self, *x):
         for step in range(self.start, self.end):
             x = self.blocks[f'step_{step}'](*x)
-        return x
+        print("  ")
+        return x 

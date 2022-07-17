@@ -91,8 +91,59 @@ class Exporter:
 
             self.model.load_state_dict(state)
             self.model = self.model.eval().cuda()  
+    def load_image(self):
+        
+
+        self.image = Image.open("dog.jpg")  # open PIL image
+        self.image_o_width, self.image_o_height = self.image.size
+
+        resize = transforms.Resize(
+            (opt.inference_resize_height, opt.inference_resize_width))
+        image = resize(self.image)  # resize to argument size
+
+        #center_crop = transforms.CenterCrop((opt.inference_crop_height, opt.inference_crop_width))
+        #image = center_crop(image)  # crop to input size
+
+        to_tensor = transforms.ToTensor()  # transform to tensor
+
+        self.input_image = to_tensor(image)  # save tensor image to self.input_image for saving later
+        image = self.normalize(self.input_image)
+
+        image = image.unsqueeze(0).float().cuda()
+        image2 = image
+        input_image_array = np.array(image2.cpu().detach().numpy(),dtype=np.float32)
+        input_image_array.tofile("tkdnn_bin/inputs/input.bin",format="f")
+
+        # simulate structure of batch:
+        image_dict = {('color_aug', 0, 0): image}  # dict
+        image_dict[('color', 0, 0)] = image
+        image_dict['domain'] = ['cityscapes_val_seg', ]
+        image_dict['purposes'] = [['segmentation', ], ['depth', ]]
+        image_dict['num_classes'] = torch.tensor([self.num_classes])
+        image_dict['domain_idx'] = torch.tensor(0)
+        self.batch = (image_dict,)  # batch tuple
+
+    def normalize(self, tensor):
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+
+        normalize = transforms.Normalize(mean, std)
+        tensor = normalize(tensor)
+
+        return tensor       
 
     def exporter(self):
+        if not os.path.exists('tkdnn_bin'):
+            os.makedirs('tkdnn_bin')    
+        if not os.path.exists('kdnn_bin/debug'):
+            os.makedirs('tkdnn_bin/debug')
+        if not os.path.exists('tkdnn_bin/layers'):
+            os.makedirs('tkdnn_bin/layers')
+        if not os.path.exists('tkdnn_bin/outputs'):
+            os.makedirs('tkdnn_bin/outputs')
+        if not os.path.exists('tkdnn_bin/inputs'):
+            os.makedirs('tkdnn_bin/inputs')
+
         self.init_model()
         for n,m in self.model.named_modules():
             m.register_forward_hook(hook)
@@ -106,7 +157,7 @@ class Exporter:
 
             if 'of Conv2d' in str(m.type):
                 file_name = "tkdnn_bin/layers/" + t + ".bin"
-                print("open file: ", file_name)
+
                 f = open(file_name, mode='wb')
 
                 w = np.array([])
@@ -114,23 +165,26 @@ class Exporter:
                 if 'weight' in m._parameters and m._parameters['weight'] is not None:
                     w = m._parameters['weight'].cpu().data.numpy()
                     w = np.array(w, dtype=np.float32)
-                    print("    weights shape:", np.shape(w))
+
 
                 if 'bias' in m._parameters and m._parameters['bias'] is not None:
                     b = m._parameters['bias'].cpu().data.numpy()
                     b = np.array(b, dtype=np.float32)
-                    print("    bias shape:", np.shape(b))
+
                 
                 bin_write(f, w)
                 bias_shape = w.shape[0]
                 if b.size > 0:
                     bin_write(f, b)
+                else:
+               	    bin_write(f,np.zeros(bias_shape))
+               	    bias_shape=0
                 f.close()
-                print("close file")
+
                 f = None
             if 'of BatchNorm2d' in str(m.type):
                 file_name = "tkdnn_bin/layers/" + t + ".bin"
-                print("open file: ",file_name)
+
                 f = open(file_name,mode='wb')
                 b = m._parameters['bias'].cpu().data.numpy()
                 b = np.array(b, dtype=np.float32)
@@ -145,14 +199,28 @@ class Exporter:
                 bin_write(f, rm)
                 bin_write(f, rv)
 
-                print("    b shape:", np.shape(b))
-                print("    s shape:", np.shape(s))
-                print("    rm shape:", np.shape(rm))
-                print("    rv shape:", np.shape(rv))
+               
 
                 f.close()
-                print("close file")
+
+
+        self.load_image()
+        output = self.model(self.batch)
+        for i in range(0,4):
+            disps_pred_temp = output[0]["disp",i]
+            print(disps_pred_temp.size())
+            disps_pred_temp_np_array = np.array(disps_pred_temp.cpu().detach().numpy(),dtype=np.float32)
+            output_file_name = "tkdnn_bin/outputs/depth_decoder_output_" + str(i) + ".bin"
+            disps_pred_temp_np_array.tofile(output_file_name,format="f")
+        segs_pred = output[0]['segmentation_logits', 0] 
+        segs_pred = segs_pred.exp()
+        print(segs_pred.size())
+        seg_pred_temp_np_array = np.array(segs_pred.cpu().detach().numpy(),dtype=np.float32)
+        output_file_name = "tkdnn_bin/outputs/seg_decoder_output.bin"
+        seg_pred_temp_np_array.tofile(output_file_name,format="f")
         print(self.model)
+        
+
         
 if __name__ == "__main__":
     opt = InferenceEvaluationArguments().parse()
